@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from .models import User, Reading
 import re
 
@@ -133,3 +135,118 @@ class ReadingSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         return instance
+
+class RegisterSerializer(serializers.ModelSerializer):
+    """
+    Serializer for registering a new user.
+    Validates user input, ensures password confirmation, and creates a user with hashed password.
+    """
+    password = serializers.CharField(
+        write_only=True,
+        required=True,
+        validators=[validate_password],
+        style={'input_type': 'password'}
+    )
+    password2 = serializers.CharField(
+        write_only=True,
+        required=True,
+        style={'input_type': 'password'}
+    )
+
+    class Meta:
+        model = User
+        fields = (
+            'email', 'first_name', 'last_name', 'password', 'password2',
+            'age', 'weight', 'height', 'has_diabetes', 'has_hypertension'
+        )
+        extra_kwargs = {
+            'email': {'required': True},
+            'first_name': {'required': True},
+            'last_name': {'required': True},
+            'age': {'required': False},
+            'weight': {'required': False},
+            'height': {'required': False},
+            'has_diabetes': {'required': False, 'default': False},
+            'has_hypertension': {'required': False, 'default': False}
+        }
+
+    def validate_email(self, value):
+        """Validate email format and uniqueness."""
+        if not re.match(r'^[\w\.-]+@[\w\.-]+\.\w+$', value):
+            raise serializers.ValidationError("Please enter a valid email address.")
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("This email is already registered.")
+        return value.lower()
+
+    def validate_age(self, value):
+        """Validate age is within a realistic range."""
+        if value is not None:
+            if not isinstance(value, int) or value < 0 or value > 150:
+                raise serializers.ValidationError("Age must be between 0 and 150 years.")
+        return value
+
+    def validate_weight(self, value):
+        """Validate weight is within a realistic range."""
+        if value is not None:
+            if not isinstance(value, (int, float)) or value < 20 or value > 500:
+                raise serializers.ValidationError("Weight must be between 20 and 500 kg.")
+        return value
+
+    def validate_height(self, value):
+        """Validate height is within a realistic range."""
+        if value is not None:
+            if not isinstance(value, (int, float)) or value < 50 or value > 250:
+                raise serializers.ValidationError("Height must be between 50 and 250 cm.")
+        return value
+
+    def validate_password(self, value):
+        """Enhance password validation with custom error messages."""
+        try:
+            validate_password(value)
+        except ValidationError as e:
+            raise serializers.ValidationError(
+                f"Password is invalid: {', '.join(str(msg) for msg in e.messages)}"
+            )
+        return value
+
+    def validate(self, data):
+        """Validate that passwords match and perform cross-field checks."""
+        if data['password'] != data['password2']:
+            raise serializers.ValidationError({"password": "Passwords must match."})
+        
+        # Cross-field validation for health conditions
+        if data.get('has_diabetes') and data.get('age') is not None and data['age'] < 10:
+            raise serializers.ValidationError(
+                {"has_diabetes": "Diabetes diagnosis is unlikely for age under 10."}
+            )
+        if data.get('has_hypertension') and data.get('age') is not None and data['age'] < 10:
+            raise serializers.ValidationError(
+                {"has_hypertension": "Hypertension diagnosis is unlikely for age under 10."}
+            )
+        return data
+
+    def create(self, validated_data):
+        """Create a new user with hashed password and return serialized data."""
+        validated_data.pop('password2')  # Remove confirmation password
+        try:
+            user = User.objects.create_user(
+                email=validated_data['email'],
+                password=validated_data['password'],
+                first_name=validated_data.get('first_name', ''),
+                last_name=validated_data.get('last_name', ''),
+                age=validated_data.get('age'),
+                weight=validated_data.get('weight'),
+                height=validated_data.get('height'),
+                has_diabetes=validated_data.get('has_diabetes', False),
+                has_hypertension=validated_data.get('has_hypertension', False)
+            )
+            # Return serialized user data for consistent API response
+            return user
+        except Exception as e:
+            raise serializers.ValidationError(f"Failed to create user: {str(e)}")
+
+    def to_representation(self, instance):
+        """Customize the response to exclude sensitive fields."""
+        from .serializers import UserSerializer  # Avoid circular import
+        serializer = UserSerializer(instance)
+        return serializer.data
