@@ -3,16 +3,11 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.throttling import AnonRateThrottle
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import User, Reading
 from .serializers import UserSerializer, ReadingSerializer, RegisterSerializer
 import logging
-from rest_framework.views import APIView
-from rest_framework.authtoken.views import ObtainAuthToken
-from rest_framework.authtoken.models import Token
 
-# Logger setup
 logger = logging.getLogger(__name__)
 
 # -------------------------
@@ -94,31 +89,3 @@ class ReadingViewSet(viewsets.ModelViewSet):
         readings = Reading.objects.abnormal_readings(user=request.user)
         serializer = self.get_serializer(readings, many=True)
         return Response(serializer.data)
-
-class LoginView(ObtainAuthToken):
-    """
-    Custom login view returning token and user details.
-    """
-    def post(self, request, *args, **kwargs):
-        response = super().post(request, *args, **kwargs)
-        token = Token.objects.get(key=response.data['token'])
-        user = token.user
-        return Response({
-            'token': token.key,
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'first_name': user.first_name,
-                'last_name': user.last_name,
-            }
-        })
-
-class LogoutView(APIView):
-    """
-    Log out by deleting the token.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def post(self, request):
-        request.user.auth_token.delete()
-        return Response({"message": "Logged out successfully."}, status=status.HTTP_200_OK)
